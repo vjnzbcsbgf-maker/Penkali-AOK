@@ -1,0 +1,149 @@
+name: Bedrock Arch ARM64 RootFS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            curl \
+            wget \
+            tar \
+            gzip \
+            xz-utils \
+            git \
+            rsync \
+            file \
+            qemu-user-static
+
+      - name: Download Arch Linux ARM64
+        run: |
+          mkdir -p rootfs
+
+          wget -O arch.tar.gz \
+            https://ca.us.mirror.archlinuxarm.org/os/multi/ArchLinuxARM-aarch64-latest.tar.gz
+
+          tar -xpf arch.tar.gz -C rootfs
+
+      - name: Prepare Arch
+        run: |
+          sudo cp /etc/resolv.conf rootfs/etc/resolv.conf
+
+          sudo cp /usr/bin/qemu-aarch64-static \
+            rootfs/usr/bin/qemu-aarch64-static
+
+          sudo mount --bind /dev rootfs/dev
+          sudo mount -t proc proc rootfs/proc
+          sudo mount -t sysfs sysfs rootfs/sys
+
+          sudo chroot rootfs /bin/bash -c '
+            pacman-key --init
+            pacman-key --populate archlinuxarm
+
+            pacman -Sy --noconfirm
+
+            pacman -S --noconfirm \
+              base \
+              base-devel \
+              git \
+              curl \
+              wget \
+              tar \
+              gzip \
+              xz \
+              sudo
+
+            pacman -Scc --noconfirm
+          '
+
+      - name: Download Bedrock userland
+        run: |
+          git clone \
+            --branch 1.0beta2 \
+            --depth 1 \
+            https://github.com/bedrocklinux/bedrocklinux-userland.git \
+            bedrock
+
+      - name: Build Bedrock
+        working-directory: bedrock
+        run: |
+          make -j"$(nproc)"
+
+      - name: Install Bedrock into Arch rootfs
+        run: |
+          BEDROCK_TARBALL=$(find . \
+            -type f \
+            \( -name "*.tar.gz" -o -name "*.tar.xz" \) \
+            | head -n 1)
+
+          if [ -z "$BEDROCK_TARBALL" ]; then
+            echo "ERROR: Bedrock tarball not found"
+            exit 1
+          fi
+
+          echo "Bedrock tarball:"
+          echo "$BEDROCK_TARBALL"
+
+          sudo tar -xpf "$BEDROCK_TARBALL" -C rootfs
+
+      - name: Configure rootfs
+        run: |
+          sudo mkdir -p \
+            rootfs/bedrock \
+            rootfs/bedrock/strata \
+            rootfs/proc \
+            rootfs/sys \
+            rootfs/run \
+            rootfs/tmp
+
+          sudo chmod 1777 rootfs/tmp
+
+          echo bedrock > rootfs/etc/hostname
+
+          sudo rm -f rootfs/usr/bin/qemu-aarch64-static
+
+      - name: Unmount
+        if: always()
+        run: |
+          sudo umount -lf rootfs/proc 2>/dev/null || true
+          sudo umount -lf rootfs/sys 2>/dev/null || true
+          sudo umount -lf rootfs/dev 2>/dev/null || true
+
+      - name: Verify
+        run: |
+          test -d rootfs/bedrock
+          test -d rootfs/usr
+          test -d rootfs/etc
+          test -x rootfs/bin/bash
+
+          echo "RootFS:"
+          du -sh rootfs
+
+      - name: Create iSH-AOK tarball
+        run: |
+          mkdir -p artifact
+
+          sudo tar \
+            --numeric-owner \
+            --xattrs \
+            --acls \
+            -czpf artifact/bedrock-arch-aarch64.tar.gz \
+            -C rootfs .
+
+          sudo chown "$USER:$USER" \
+            artifact/bedrock-arch-aarch64.tar.gz
+
+          ls -lh artifact/
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: bedrock-arch-aarch64
+          path: artifact/bedrock-arch-aarch64.tar.gz
+          retention-days: 7
