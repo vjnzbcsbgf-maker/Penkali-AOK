@@ -1,0 +1,57 @@
+name: Build Bedrock ARM64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            build-essential \
+            git \
+            make \
+            autoconf \
+            automake \
+            libtool \
+            gettext \
+            fakeroot \
+            tar \
+            xz-utils
+
+      - name: Clone Bedrock
+        run: |
+          git clone --depth 1 \
+            https://github.com/bedrocklinux/bedrocklinux-userland.git
+
+      - name: Build
+        working-directory: bedrocklinux-userland
+        run: |
+          make -j"$(nproc)"
+
+      - name: Find output
+        run: |
+          find . -type f \
+            \( -name "*.tar.xz" -o -name "*.tar.gz" \) \
+            -exec ls -lh {} \;
+
+      - name: Package
+        run: |
+          mkdir output
+
+          find bedrocklinux-userland -type f \
+            \( -name "*.tar.xz" -o -name "*.tar.gz" \) \
+            -exec cp {} output/ \;
+
+      - name: Upload rootfs
+        uses: actions/upload-artifact@v4
+        with:
+          name: bedrock-arm64
+          path: output/
