@@ -1,0 +1,17 @@
+name: Test ARM64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Check system
+        run: |
+          uname -a
+          uname -m
+          nproc
+          free -h
+          df -h
